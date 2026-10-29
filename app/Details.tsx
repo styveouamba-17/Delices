@@ -1,134 +1,153 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  View, 
-  StyleSheet, 
-  FlatList, 
-  Text, 
-  SafeAreaView, 
-  Image, 
-  TouchableOpacity,
+import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
+import {
   ActivityIndicator,
-  StatusBar
-} from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { NavigationProp, RouteProp } from '@react-navigation/native';
-
-interface Meal {
-  idMeal: string;
-  strMeal: string;
-  strMealThumb: string;
-}
-
-type DetailsRouteProp = RouteProp<{ Details: { category: string } }, 'Details'>;
+  FlatList,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import CategoryPills from "../components/CategoryPills";
+import { RecipeListRow } from "../components/RecipeCard";
+import SearchBar from "../components/SearchBar";
+import { COLORS } from "../constants/theme";
+import { Category, fetchCategories, fetchMealsByCategory, Meal } from "../lib/mealdb";
+import { useTranslatedText } from "../lib/translate";
+import { usePaginatedList } from "../lib/usePaginatedList";
 
 const Details: React.FC = () => {
-  const navigation = useNavigation<NavigationProp<any>>();
-  const route = useRoute<DetailsRouteProp>();
-  const { category } = route.params;
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const initialCategory =
+    typeof params.category === "string" ? params.category : "all";
+
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState(initialCategory);
   const [meals, setMeals] = useState<Meal[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
-    fetchMealsByCategory();
+    fetchCategories().then(setCategories).catch(() => {});
   }, []);
 
-  const fetchMealsByCategory = async () => {
-    setLoading(true);
-    const apiURL = `https://www.themealdb.com/api/json/v1/1/filter.php?c=${category}`;
+  useEffect(() => {
+    loadMeals();
+  }, [selectedCategory]);
 
+  const loadMeals = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const response = await fetch(apiURL);
-      const responseJson = await response.json();
-      if (responseJson.meals) {
-        setMeals(responseJson.meals);
+      const data = await fetchMealsByCategory(selectedCategory);
+      if (data.length > 0) {
+        setMeals(data);
       } else {
-        setError("Aucun plat trouvé pour cette catégorie");
+        setMeals([]);
+        setError("Aucune recette trouvée pour cette sélection.");
       }
-    } catch (error) {
-      console.error(error);
-      setError("Erreur lors du chargement des plats");
+    } catch (err) {
+      console.error(err);
+      setError("Erreur lors du chargement des plats.");
     } finally {
       setLoading(false);
     }
   };
 
-  const renderItem = ({ item }: { item: Meal }) => {
-    return (
-      <TouchableOpacity
-        onPress={() => navigation.navigate('PlatsDetails', { id: item.idMeal })}
-        style={styles.itemContainer}
-        activeOpacity={0.7}
-      >
-        <View style={styles.cardContent}>
-          <Image 
-            source={{ uri: item.strMealThumb }} 
-            style={styles.image} 
-            resizeMode="cover"
-          />
-          <View style={styles.overlay}>
-            <Text style={styles.itemTitle} numberOfLines={2}>
-              {item.strMeal}
-            </Text>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderHeader = () => (
-    <View style={styles.headerContainer}>
-      <TouchableOpacity 
-        style={styles.backButton}
-        onPress={() => navigation.goBack()}
-      >
-        <Text style={styles.backButtonText}>←</Text>
-      </TouchableOpacity>
-      <Text style={styles.headerText}>{category}</Text>
-      <View style={styles.placeholderButton} />
-    </View>
+  const pillOptions = useMemo(
+    () => [
+      { key: "all", label: "Toutes" },
+      ...categories.map((c) => ({ key: c.strCategory, label: c.strCategory })),
+    ],
+    [categories],
   );
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <Text style={styles.categoryTitle}>{category}</Text>
-        <ActivityIndicator size="large" color="#FF6B6B" />
-        <Text style={styles.loadingText}>Chargement des délices culinaires...</Text>
-      </SafeAreaView>
-    );
-  }
+  const filteredMeals = useMemo(
+    () =>
+      meals.filter((meal) =>
+        meal.strMeal.toLowerCase().includes(search.toLowerCase()),
+      ),
+    [meals, search],
+  );
 
-  if (error) {
-    return (
-      <SafeAreaView style={styles.errorContainer}>
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity 
-          style={styles.retryButton}
-          onPress={fetchMealsByCategory}
-        >
-          <Text style={styles.retryButtonText}>Réessayer</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-    );
-  }
+  const { visibleItems, hasMore, loadMore } = usePaginatedList(filteredMeals);
+  const selectedCategoryFr = useTranslatedText(
+    selectedCategory !== "all" ? selectedCategory : undefined,
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFF" />
-      {renderHeader()}
-      <Text style={styles.resultCount}>
-        {meals.length} {meals.length > 1 ? 'recettes trouvées' : 'recette trouvée'}
-      </Text>
-      <FlatList
-        data={meals}
-        keyExtractor={(item) => item.idMeal}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        numColumns={2}
-        columnWrapperStyle={styles.columnWrapper}
-      />
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
+
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Ionicons name="chevron-back" size={22} color={COLORS.text} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          {selectedCategory === "all" ? "Toutes les recettes" : selectedCategoryFr}
+        </Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
+      <View style={styles.filtersBlock}>
+        <SearchBar value={search} onChangeText={setSearch} />
+        <CategoryPills
+          options={pillOptions}
+          selectedKey={selectedCategory}
+          onSelect={setSelectedCategory}
+          style={styles.pillsRow}
+        />
+      </View>
+
+      {loading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
+      ) : error ? (
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={loadMeals}>
+            <Text style={styles.retryButtonText}>Réessayer</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={visibleItems}
+          keyExtractor={(item) => item.idMeal}
+          contentContainerStyle={styles.list}
+          showsVerticalScrollIndicator={false}
+          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          onEndReachedThreshold={0.5}
+          onEndReached={loadMore}
+          renderItem={({ item }) => (
+            <RecipeListRow
+              id={item.idMeal}
+              title={item.strMeal}
+              thumbnail={item.strMealThumb}
+              category={item.strCategory}
+              area={item.strArea}
+              hasVideo={!!item.strYoutube}
+              onPress={() =>
+                router.push({ pathname: "/PlatsDetails", params: { id: item.idMeal } })
+              }
+            />
+          )}
+          ListFooterComponent={
+            hasMore ? (
+              <ActivityIndicator
+                style={styles.footerLoader}
+                size="small"
+                color={COLORS.primary}
+              />
+            ) : null
+          }
+        />
+      )}
     </SafeAreaView>
   );
 };
@@ -136,124 +155,71 @@ const Details: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.background,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 20,
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 20,
-  },
-  headerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 12,
   },
   backButton: {
-    padding: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.card,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  backButtonText: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#FF6B6B',
-  },
-  placeholderButton: {
-    width: 30,
-  },
-  headerText: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  categoryTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize:12, 
-    color: '#666',
-    fontStyle: 'italic',
-  },
-  errorText: {
+  headerTitle: {
     fontSize: 18,
-    color: '#FF6B6B',
-    textAlign: 'center',
-    marginBottom: 20,
+    fontWeight: "800",
+    color: COLORS.text,
+    flex: 1,
+    textAlign: "center",
   },
-  retryButton: {
-    backgroundColor: '#FF6B6B',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
+  headerSpacer: {
+    width: 40,
   },
-  retryButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  resultCount: {
-    fontSize: 14,
-    color: '#666',
-    marginLeft: 16,
-    marginTop: 8,
+  filtersBlock: {
+    paddingHorizontal: 18,
+    gap: 14,
     marginBottom: 8,
   },
-  listContent: {
-    padding: 8,
+  pillsRow: {
+    paddingRight: 18,
   },
-  columnWrapper: {
-    justifyContent: 'space-between',
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
   },
-  itemContainer: {
-    width: '48%',
+  errorText: {
+    color: COLORS.muted,
+    fontSize: 15,
+    textAlign: "center",
     marginBottom: 16,
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
-  cardContent: {
-    position: 'relative',
-    borderRadius: 12,
-    overflow: 'hidden',
+  retryButton: {
+    backgroundColor: COLORS.text,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 14,
   },
-  image: {
-    width: '100%',
-    height: 150,
-    borderRadius: 12,
+  retryButtonText: {
+    color: "#fff",
+    fontWeight: "700",
   },
-  overlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    padding: 10,
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
+  list: {
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 24,
   },
-  itemTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#fff',
+  footerLoader: {
+    paddingVertical: 20,
   },
 });
 
